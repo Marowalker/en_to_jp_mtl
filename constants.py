@@ -1,14 +1,49 @@
-from transformers import AutoTokenizer, TFAutoModelForSeq2SeqLM
-from datasets import load_dataset
+import re
+import string
+from janome.tokenizer import Tokenizer as JPTokenizer
+from keras.preprocessing.text import Tokenizer
 
-
-encoder = TFAutoModelForSeq2SeqLM.from_pretrained('t5-base', from_pt=True)
-tokenizer = AutoTokenizer.from_pretrained('t5-base')
-
-data = load_dataset('snow_simplified_japanese_corpus', 'snow_t15')
 
 TRAINED_MODEL = 'trained_models/'
 
-EPOCHS = 5
+EPOCHS = 3
 
 BATCH_SIZE = 16
+
+mispell_dict = {
+    "aren't": "are not",
+    "can't": "cannot",
+    "couldn't": "could not",
+    "doesn't": "does not",
+    "don't": "do not",
+    "hadn't": "had not",
+    "hasn't": "has not",
+    "haven't": "have not",
+    "let's": "let us",
+    "mightn't": "might not",
+    "mustn't": "must not",
+    "shan't": "shall not",
+    "shouldn't": "should not",
+    "'s": " is",
+    "'ll": " will",
+    "'d": " would",
+    "'re": " are",
+    "'ve": " have",
+    "'m": " am",
+    "wasn't": "was not",
+    "didn't": "did not",
+    "tryin'": "trying"
+}
+
+mispell_re = re.compile('(%s)' % '|'.join(mispell_dict.keys()))
+string.punctuation += '、。【】「」『』…・〽（）〜？！｡：､；･'
+CP = lambda x: x.translate(str.maketrans('', '', string.punctuation))
+
+token_jp = JPTokenizer()
+en_tokenizer = Tokenizer(filters='')
+jp_tokenizer = Tokenizer(filters='')
+
+DATA = 'data/'
+TRAIN = DATA + 'train.csv'
+DEV = DATA + 'dev.csv'
+TEST = DATA + 'test.csv'
