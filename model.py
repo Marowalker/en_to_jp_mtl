@@ -2,7 +2,7 @@ import constants
 import numpy as np
 import evaluate
 import os
-from preprocessing import get_dataset
+from preprocessing import get_dataset, get_train_test
 from transformers.keras_callbacks import KerasMetricCallback
 from transformers import AdamWeightDecay
 
@@ -17,8 +17,9 @@ class ENtoJPModel:
         if not os.path.exists(self.model_path):
             os.makedirs(self.model_path)
 
-    def _add_data(self, data_train, data_test):
+    def _add_data(self, data_train, data_val, data_test):
         self.data_train = get_dataset(data_train, self.model, self.tokenizer)
+        self.data_val = get_dataset(data_val, self.model, self.tokenizer)
         self.data_test = get_dataset(data_test, self.model, self.tokenizer)
 
     @staticmethod
@@ -50,16 +51,44 @@ class ENtoJPModel:
     def _add_train_ops(self):
         self.optimizer = AdamWeightDecay(learning_rate=2e-5, weight_decay_rate=0.01)
         self.model.compile(optimizer=self.optimizer)
-        self.callback = KerasMetricCallback(metric_fn=self.compute_metrics)
+        self.callback = KerasMetricCallback(metric_fn=self.compute_metrics, eval_dataset=self.data_val)
         print(self.model.summary())
 
     def _train(self):
-        self.model.fit(self.data_train, validation_split=0.1, batch=constants.BATCH_SIZE, epochs=constants.EPOCHS,
-                       callbacks=[self.callback])
+        self.model.fit(self.data_train, validation_data=self.data_val, batch_size=constants.BATCH_SIZE,
+                       epochs=constants.EPOCHS, callbacks=[self.callback])
         self.model.save_weights(self.model_path)
 
-    def build(self, train_data, test_data, training=None):
-        self._add_data(train_data, test_data)
+    def build(self, train_data, val_data, test_data, training=None):
+        self._add_data(train_data, val_data, test_data)
         self._add_train_ops()
         if training:
             self._train()
+
+    def evaluate(self):
+        self.model.load_weights(self.model_path)
+        y_preds = self.model.predict(self.data_test)
+        print(self.compute_metrics(y_preds))
+
+    def predict(self, input_sent):
+        self.model.load_weights(self.model_path)
+        tokenized_sent = self.tokenizer.encode(input_sent)
+        y_pred = self.model.predict(tokenized_sent)
+        output_sent = self.tokenizer.decode(y_pred)
+        return output_sent
+
+
+def run_trainer():
+    train_data, test_data = get_train_test(constants.data['train'])
+    train_data, val_data = get_train_test(train_data)
+    model = ENtoJPModel(encoder=constants.encoder, tokenizer=constants.tokenizer)
+    model.build(train_data, val_data, test_data, training=True)
+    model.evaluate()
+
+
+def run_predict():
+    train_data, test_data = get_train_test(constants.data['train'])
+    train_data, val_data = get_train_test(train_data)
+    model = ENtoJPModel(encoder=constants.encoder, tokenizer=constants.tokenizer)
+    model.build(train_data, val_data, test_data, training=None)
+    print(model.predict("Hello"))

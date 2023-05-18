@@ -14,8 +14,8 @@ def preprocess_function(examples):
     return model_inputs
 
 
-def get_train_test(ratio=0.1):
-    data = constants.data['train'].train_test_split(test_size=ratio)
+def get_train_test(data, ratio=0.1):
+    data = data.train_test_split(test_size=ratio)
     train_data, test_data = data['train'], data['test']
     return train_data, test_data
 
