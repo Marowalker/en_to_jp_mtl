@@ -2,13 +2,8 @@ import re
 import string
 from janome.tokenizer import Tokenizer as JPTokenizer
 from keras.preprocessing.text import Tokenizer
+import tensorflow as tf
 
-
-TRAINED_MODEL = 'trained_models/'
-
-EPOCHS = 3
-
-BATCH_SIZE = 16
 
 mispell_dict = {
     "aren't": "are not",
@@ -47,3 +42,21 @@ DATA = 'data/'
 TRAIN = DATA + 'train.csv'
 DEV = DATA + 'dev.csv'
 TEST = DATA + 'test.csv'
+PICKLE = 'pickle/'
+TRAINED_MODEL = 'trained_models/'
+
+EPOCHS = 7
+
+BATCH_SIZE = 64
+
+IS_REBUILD = 1
+
+BUFFER_SIZE = 1024
+steps_per_epoch = BUFFER_SIZE // BATCH_SIZE
+# val_steps_per_epoch = len(val_jp) // BATCH_SIZE
+embedding_dims = 256
+rnn_units = 1024
+dense_units = 1024
+Dtype = tf.float32
+
+MAX_LENGTH = 128
