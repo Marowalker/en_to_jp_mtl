@@ -46,6 +46,7 @@ PICKLE = 'pickle/'
 TRAINED_MODEL = 'trained_models/'
 
 EPOCHS = 7
+PATIENCE = 2
 
 BATCH_SIZE = 64
 
