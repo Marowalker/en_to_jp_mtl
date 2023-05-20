@@ -1,174 +1,118 @@
 import tensorflow as tf
-from keras.layers import Input, Dense, LSTM, LSTMCell
-from keras.layers import Embedding, Bidirectional
-import tensorflow_addons as tfa
-import keras.backend as K
 import constants
-from keras.losses import SparseCategoricalCrossentropy
-import sacrebleu
-import os
+from utils import ShapeChecker
+from keras.utils import pad_sequences
 
 
-def loss_function(y_true, y_pred):
-    # shape of y [batch_size, ty]
-    # shape of y_pred [batch_size, Ty, output_vocab_size]
-    sparsecategoricalcrossentropy = SparseCategoricalCrossentropy(from_logits=True,
-                                                                  reduction='none')
-    loss = sparsecategoricalcrossentropy(y_true=y_true, y_pred=y_pred)
-    mask = tf.logical_not(tf.math.equal(y_true, 0))  # output 0 for y=0 else output 1
-    mask = tf.cast(mask, dtype=loss.dtype)
-    loss = mask * loss
-    loss = tf.reduce_mean(loss)
-    return loss
+class Encoder(tf.keras.layers.Layer):
+    def __init__(self, tokenizer, units):
+        super(Encoder, self).__init__()
+        self.tokenizer = tokenizer
+        self.vocab_size = len(self.tokenizer.word_index) + 1
+        self.units = units
+
+        # The embedding layer converts tokens to vectors
+        self.embedding = tf.keras.layers.Embedding(self.vocab_size, units,
+                                                   mask_zero=True)
+
+        # The RNN layer processes those vectors sequentially.
+        self.rnn = tf.keras.layers.Bidirectional(
+            merge_mode='sum',
+            layer=tf.keras.layers.GRU(units,
+                                      # Return the sequence and state
+                                      return_sequences=True,
+                                      recurrent_initializer='glorot_uniform'))
+
+    def call(self, x):
+        shape_checker = ShapeChecker()
+        shape_checker(x, 'batch s')
+
+        # 2. The embedding layer looks up the embedding vector for each token.
+        x = self.embedding(x)
+        shape_checker(x, 'batch s units')
+
+        # 3. The GRU processes the sequence of embeddings.
+        x = self.rnn(x)
+        shape_checker(x, 'batch s units')
+
+        # 4. Returns the new sequence of embeddings.
+        return x
+
+    def convert_input(self, texts):
+        context = self.tokenizer.texts_to_sequences(texts)
+        context = tf.constant(pad_sequences(context, padding='post', maxlen=constants.MAX_LENGTH))
+        context = self(context)
+        return context
 
 
-def initialize_initial_state():
-    return [tf.zeros((constants.BATCH_SIZE, constants.rnn_units)),
-            tf.zeros((constants.BATCH_SIZE, constants.rnn_units))]
-
-
-def bleu_score(y_true, y_pred):
-    score = sacrebleu.corpus_bleu(y_pred, [y_true]).score / 100
-    return score
-
-
-class EncoderNetwork(tf.keras.Model):
-    def __init__(self, input_vocab_size, embedding_dims, rnn_units):
+class CrossAttention(tf.keras.layers.Layer):
+    def __init__(self, units, **kwargs):
         super().__init__()
-        self.encoder_embedding = Embedding(input_dim=input_vocab_size,
-                                           output_dim=embedding_dims)
-        self.encoder_rnnlayer = LSTM(rnn_units, return_sequences=True,
-                                     return_state=True)
-        self.initial_state = initialize_initial_state()
+        self.last_attention_weights = None
+        self.mha = tf.keras.layers.MultiHeadAttention(key_dim=units, num_heads=1, **kwargs)
+        self.layernorm = tf.keras.layers.LayerNormalization()
+        self.add = tf.keras.layers.Add()
 
-    def call(self, inputs):
-        embeddings = self.encoder_embedding(inputs)
-        a, a_tx, c_tx = self.encoder_rnnlayer(embeddings, initial_state=self.initial_state)
-        return a, a_tx, c_tx
+    def call(self, x, context):
+        shape_checker = ShapeChecker()
 
+        shape_checker(x, 'batch t units')
+        shape_checker(context, 'batch s units')
 
-# DECODER
-def build_attention_mechanism(units, memory, MSL):
-    """
-    MSL : Memory Sequence Length
-    """
-    # return tfa.seq2seq.LuongAttention(units, memory = memory,
-    #                                  memory_sequence_length = MSL)
-    return tfa.seq2seq.BahdanauAttention(units, memory=memory,
-                                         memory_sequence_length=MSL)
+        attn_output, attn_scores = self.mha(
+            query=x,
+            value=context,
+            return_attention_scores=True)
 
+        shape_checker(x, 'batch t units')
+        shape_checker(attn_scores, 'batch heads t s')
 
-class DecoderNetwork(tf.keras.Model):
-    def __init__(self, output_vocab_size, embedding_dims, rnn_units):
-        super().__init__()
-        self.decoder_embedding = Embedding(input_dim=output_vocab_size,
-                                           output_dim=embedding_dims)
-        self.dense_layer = Dense(output_vocab_size)
-        self.decoder_rnncell = LSTMCell(rnn_units)
-        # Sampler
-        self.sampler = tfa.seq2seq.sampler.TrainingSampler()
-        # Create attention mechanism with memory = None
-        self.attention_mechanism = \
-            build_attention_mechanism(constants.dense_units, None, constants.BATCH_SIZE * [constants.MAX_LENGTH])
-        self.rnn_cell = self.build_rnn_cell(constants.BATCH_SIZE)
-        self.decoder = tfa.seq2seq.BasicDecoder(self.rnn_cell,
-                                                sampler=self.sampler,
-                                                output_layer=self.dense_layer
-                                                )
+        # Cache the attention scores for plotting later.
+        attn_scores = tf.reduce_mean(attn_scores, axis=1)
+        shape_checker(attn_scores, 'batch t s')
+        self.last_attention_weights = attn_scores
 
-    # wrap decodernn cell
-    def build_rnn_cell(self, batch_size):
-        return tfa.seq2seq.AttentionWrapper(self.decoder_rnncell,
-                                            self.attention_mechanism,
-                                            attention_layer_size=constants.dense_units)
+        x = self.add([x, attn_output])
+        x = self.layernorm(x)
 
-    def build_decoder_initial_state(self, batch_size, encoder_state, Dtype):
-        decoder_initial_state = self.rnn_cell.get_initial_state(batch_size=batch_size,
-                                                                dtype=Dtype)
-        decoder_initial_state = decoder_initial_state.clone(cell_state=encoder_state)
-        return decoder_initial_state
-
-    def call(self, inputs):
-        output_batch = inputs[0]
-        a, a_tx, c_tx = inputs[1]
-
-        # Prepare correct Decoder input & output sequence data
-        decoder_input = output_batch[:, :-1]  # ignore eos
-        # compare logits with timestepped +1 version of decoder_input
-
-        # Decoder Embeddings
-        decoder_emb_inp = self.decoder_embedding(decoder_input)
-
-        # Setting up decoder memory from encoder output
-        # and Zero State for AttentionWrapperState
-        self.attention_mechanism.setup_memory(a)
-        decoder_initial_state = self.build_decoder_initial_state(constants.BATCH_SIZE,
-                                                                 encoder_state=[a_tx, c_tx],
-                                                                 Dtype=tf.float32)
-
-        # BasicDecoderOutput
-        outputs, _, _ = self.decoder(decoder_emb_inp, initial_state=decoder_initial_state,
-                                     sequence_length=constants.BATCH_SIZE * [constants.MAX_LENGTH - 1])
-
-        return outputs.rnn_output
+        return x
 
 
-class ENtoJPModel:
-    def __init__(self, input_vocab_size, output_vocab_size, embedding_dims, rnn_units):
-        self.encoder = EncoderNetwork(input_vocab_size, embedding_dims, rnn_units)
-        self.decoder = DecoderNetwork(output_vocab_size, embedding_dims, rnn_units)
-        self.model_path = constants.TRAINED_MODEL
+class Decoder(tf.keras.layers.Layer):
+    @classmethod
+    def add_method(cls, fun):
+        setattr(cls, fun.__name__, fun)
+        return fun
 
-        if not os.path.exists(self.model_path):
-            os.makedirs(self.model_path)
+    def __init__(self, tokenizer, units):
+        super(Decoder, self).__init__()
+        self.topkenizer = tokenizer
+        self.vocab_size = len(self.tokenizer.word_index) + 1
+        self.word_to_id = tf.keras.layers.StringLookup(
+            vocabulary=text_processor.get_vocabulary(),
+            mask_token='', oov_token='[UNK]')
+        self.id_to_word = tf.keras.layers.StringLookup(
+            vocabulary=text_processor.get_vocabulary(),
+            mask_token='', oov_token='[UNK]',
+            invert=True)
+        self.start_token = self.word_to_id('[START]')
+        self.end_token = self.word_to_id('[END]')
 
-    def _add_inputs(self):
-        self.input_en = Input(shape=(constants.MAX_LENGTH,), dtype=tf.int32)
-        self.input_jp = Input(shape=(constants.MAX_LENGTH,), dtype=tf.int32)
+        self.units = units
 
-    def _add_data(self, train_data, val_data, test_data):
-        self.dataset_train = train_data
-        self.dataset_val = val_data
-        self.dataset_test = test_data
+        # 1. The embedding layer converts token IDs to vectors
+        self.embedding = tf.keras.layers.Embedding(self.vocab_size,
+                                                   units, mask_zero=True)
 
-    def _encoder_decoder_layer(self):
-        encoder_outputs = self.encoder(self.input_en)
-        logits, output = self.decoder([self.input_jp, encoder_outputs])
-        return logits, output
+        # 2. The RNN keeps track of what's been generated so far.
+        self.rnn = tf.keras.layers.GRU(units,
+                                       return_sequences=True,
+                                       return_state=True,
+                                       recurrent_initializer='glorot_uniform')
 
-    def _add_model(self):
-        self.optimizer = tf.keras.optimizers.Adam()
-        self.model = tf.keras.Model(
-            inputs=(self.input_en, self.input_jp),
-            outputs=(self._encoder_decoder_layer())
-        )
-        self.model.compile(
-            optimizer=self.optimizer,
-            loss=loss_function,
-            metrics=[bleu_score]
-        )
-        print(self.model.summary())
+        # 3. The RNN output will be the query for the attention layer.
+        self.attention = CrossAttention(units)
 
-    def _train(self):
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_bleu_score', mode='max',
-                                                          patience=constants.PATIENCE)
-
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=self.model_path,
-            save_weights_only=True,
-            monitor='val_bleu_score',
-            mode='max',
-            save_best_only=True)
-
-        self.model.fit(x=self.dataset_train, y=self.dataset_train['jp'][:, 1:],
-                       validation_data=(self.dataset_val, self.dataset_val['jp'][:, 1:]),
-                       epochs=constants.EPOCHS,
-                       batch_size=constants.BATCH_SIZE,
-                       callbacks=[early_stopping, model_checkpoint_callback])
-
-    def build(self, train_data, val_data, test_data, is_training=True):
-        self._add_inputs()
-        self._add_data(train_data, val_data, test_data)
-        self._add_model()
-        if is_training:
-            self._train()
+        # 4. This fully connected layer produces the logits for each
+        # output token.
+        self.output_layer = tf.keras.layers.Dense(self.vocab_size)

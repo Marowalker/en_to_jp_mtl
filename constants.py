@@ -52,12 +52,12 @@ BATCH_SIZE = 64
 
 IS_REBUILD = 1
 
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 300000
 steps_per_epoch = BUFFER_SIZE // BATCH_SIZE
 # val_steps_per_epoch = len(val_jp) // BATCH_SIZE
 embedding_dims = 256
-rnn_units = 1024
-dense_units = 1024
+rnn_units = 512
+dense_units = 512
 Dtype = tf.float32
 
-MAX_LENGTH = 128
+MAX_LENGTH = 96
