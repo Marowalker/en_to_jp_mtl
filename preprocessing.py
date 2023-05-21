@@ -2,25 +2,32 @@ import numpy as np
 
 import constants
 from constants import *
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from keras.utils import pad_sequences
 import pickle
 import tensorflow as tf
+import tensorflow_text as tf_text
 
 
-def preprocess_en(text) -> str:
-    def replace(match):
-        return mispell_dict[match.group(0)]
+def preprocess_en(text):
+    text = tf_text.normalize_utf8(text, 'NFKD')
+    text = tf.strings.lower(text)
 
-    text = mispell_re.sub(replace, text)
-    text = '[START] ' + text + ' [END]'
-    return CP(text)
+    for k in mispell_dict:
+        text = tf.strings.regex_replace(text, k, mispell_dict[k])
+    text = tf.strings.regex_replace(text, '[.?!,¿]', r' \0 ')
+    text = tf.strings.strip(text)
+    # text = mispell_re.sub(replace, text)
+    text = tf.strings.join(['[START]', text, '[END]'], separator=' ')
+    return text
 
 
-def preprocess_jp(jp_text) -> str:
-    jp_text = CP(' '.join([word for word in token_jp.tokenize(jp_text, wakati=True) if word != ' ']))
-    return_text = '[START] ' + jp_text + ' [END]'
-    return return_text
+def preprocess_jp(text):
+    text = tf_text.normalize_utf8(text, 'NFKD')
+    text = tf.strings.regex_replace(text, '、。【】「」『』…・〽（）〜？！｡：､；･', r' \0 ')
+    text = tf.strings.strip(text)
+    text = tf.strings.join(['[START]', text, '[END]'], separator=' ')
+    return text
 
 
 def process_data(data_file, is_train=False):
@@ -39,10 +46,9 @@ def process_data(data_file, is_train=False):
         else:
             _ = segments[0]
             jp_line = segments[-1].strip()
+            jp_line = CP(' '.join([word for word in token_jp.tokenize(jp_line, wakati=True) if word != ' ']))
             en_line = ' '.join(segments[1:len(segments) - 1]).strip()
 
-        print(en_line)
-        print(jp_line)
         all_en.append(en_line)
         all_jp.append(jp_line)
 
@@ -50,7 +56,7 @@ def process_data(data_file, is_train=False):
 
 
 def data_builder(outfile_data):
-    train_en, train_jp = process_data(TRAIN)
+    train_en, train_jp = process_data(TRAIN, is_train=True)
     dev_en, dev_jp = process_data(DEV)
     test_en, test_jp = process_data(TEST)
 
@@ -92,15 +98,15 @@ def data_loader(infile_data):
     return dataset_train, dataset_dev, dataset_test
 
 
-def get_processors(data):
+def get_processors(data_train, data_val, data_test):
     en_processor = tf.keras.layers.TextVectorization(
         standardize=preprocess_en,
         ragged=True)
-    en_processor.adapt(data.map(lambda context, target: context))
+    en_processor.adapt(data_train.map(lambda context, target: context))
     jp_processor = tf.keras.layers.TextVectorization(
         standardize=preprocess_jp,
         ragged=True)
-    jp_processor.adapt(data.map(lambda context, target: target))
+    jp_processor.adapt(data_train.map(lambda context, target: target))
 
     def process_text(context, target):
         context = en_processor(context).to_tensor()
@@ -109,4 +115,8 @@ def get_processors(data):
         targ_out = target[:, 1:].to_tensor()
         return (context, targ_in), targ_out
 
-    return en_processor, jp_processor, process_text
+    data_train = data_train.map(process_text, tf.data.AUTOTUNE)
+    data_val = data_val.map(process_text, tf.data.AUTOTUNE)
+    data_test = data_test.map(process_text, tf.data.AUTOTUNE)
+
+    return en_processor, jp_processor, data_train, data_val, data_test

@@ -50,9 +50,9 @@ PATIENCE = 2
 
 BATCH_SIZE = 64
 
-IS_REBUILD = 1
+IS_REBUILD = 0
 
-BUFFER_SIZE = 300000
+BUFFER_SIZE = 3000000
 steps_per_epoch = BUFFER_SIZE // BATCH_SIZE
 # val_steps_per_epoch = len(val_jp) // BATCH_SIZE
 embedding_dims = 256
