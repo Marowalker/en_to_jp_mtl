@@ -45,10 +45,10 @@ TEST = DATA + 'test.csv'
 PICKLE = 'pickle/'
 TRAINED_MODEL = 'trained_models/'
 
-EPOCHS = 7
-PATIENCE = 2
+EPOCHS = 10
+PATIENCE = 3
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 
 IS_REBUILD = 1
 

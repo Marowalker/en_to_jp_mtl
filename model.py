@@ -224,4 +224,35 @@ class Translator(tf.keras.Model):
         return logits
 
 
+@Translator.add_method
+def translate(self,
+              texts, *,
+              max_length=50,
+              temperature=0.0):
+    # Process the input texts
+    context = self.encoder.convert_input(texts)
+    batch_size = tf.shape(texts)[0]
 
+    # Set up the loop inputs
+    tokens = []
+    attention_weights = []
+    next_token, done, state = self.decoder.get_initial_state(context)
+
+    for _ in range(max_length):
+        # Generate the next token
+        next_token, done, state = self.decoder.get_next_token(
+            context, next_token, done, state, temperature)
+
+        # Collect the generated tokens
+        tokens.append(next_token)
+        attention_weights.append(self.decoder.last_attention_weights)
+
+        if tf.executing_eagerly() and tf.reduce_all(done):
+            break
+
+    # Stack the lists of tokens and attention weights.
+    tokens = tf.concat(tokens, axis=-1)  # t*[(batch 1)] -> (batch, t)
+    self.last_attention_weights = tf.concat(attention_weights, axis=1)  # t*[(batch 1 s)] -> (batch, t s)
+
+    result = self.decoder.tokens_to_text(tokens)
+    return result

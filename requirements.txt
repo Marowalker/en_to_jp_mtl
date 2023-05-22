@@ -1,5 +1,6 @@
 tensorflow
 tensorflow-gpu
+tensorflow-text
 keras
 tqdm
 einops
