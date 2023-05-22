@@ -30,14 +30,25 @@ def preprocess_jp(text):
     return text
 
 
-def process_data(data_file, is_train=False):
+def process_data(data_file, is_train=False, size='full'):
     all_en, all_jp = [], []
 
     with open(data_file, encoding='utf-8') as f:
         lines = f.readlines()
         f.close()
 
-    for line in tqdm(lines, desc='Processing dataset: {}'.format(
+    if size == 'full':
+        num_sample = int(len(lines))
+    elif size == 'medium':
+        num_sample = int(len(lines) // 100 * 50)
+    elif size == 'base':
+        num_sample = int(len(lines) // 100 * 10)
+    elif size == 'small':
+        num_sample = int(len(lines) // 100 * 5)
+    else:
+        num_sample = int(len(lines) // 100)
+
+    for line in tqdm(lines[:num_sample], desc='Processing dataset: {}'.format(
             'train' if is_train else 'dev' if data_file == DEV else 'test')):
         segments = line.split(',')
         if len(segments) == 2:
@@ -56,7 +67,7 @@ def process_data(data_file, is_train=False):
 
 
 def data_builder(outfile_data):
-    train_en, train_jp = process_data(TRAIN, is_train=True)
+    train_en, train_jp = process_data(TRAIN, is_train=True, size='tiny')
     dev_en, dev_jp = process_data(DEV)
     test_en, test_jp = process_data(TEST)
 
